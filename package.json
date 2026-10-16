@@ -1,7 +1,7 @@
 {
   "name": "texnikum-test",
   "version": "1.0.0",
-  "description": "Kitob bo'limlari bo'yicha test platformasi",
+  "description": "TestPlatform — kitob va fanlar bo'yicha onlayn test platformasi",
   "main": "server.js",
   "private": true,
   "scripts": {

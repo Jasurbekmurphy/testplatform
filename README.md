@@ -1,6 +1,6 @@
-# Texnikum Test Markazi
+# TestPlatform
 
-Kitob bo'limlari bo'yicha test platformasi. Foydalanuvchi guruh yaratadi, bo'limlar va savollarni kiritadi, guruh havolasini sheriklariga yuboradi. Ular ro'yxatdan o'tib, testlarni yechadi.
+Kitob va fanlar bo'yicha onlayn test platformasi (testplatform.uz) — maktab o'quvchilari, kollej/texnikum va OTM talabalari, o'qituvchilar uchun. Foydalanuvchi guruh yaratadi, bo'limlar va savollarni kiritadi, guruh havolasini sheriklariga yuboradi. Ular ro'yxatdan o'tib, testlarni yechadi.
 
 ## Imkoniyatlar
 
@@ -109,3 +109,7 @@ Eski `.doc` fayllarni Word'da `.docx` qilib saqlab, keyin yuklang.
 - Excel va Word fayllari brauzerning o'zida o'qiladi, server faqat tayyor savollarni qabul qiladi.
 
 Eslatma: mashq paytida javob darhol ko'rsatilgani uchun to'g'ri javoblar brauzerga yuboriladi. Bu o'quv mashqi uchun mo'ljallangan. Rasmiy imtihon uchun javoblarni serverda tekshiradigan alohida rejim kerak bo'ladi.
+
+## Logo va favicon
+
+`public/logo.svg` (yoki `logo.png`) va `public/favicon.png` (yoki `favicon.ico`) fayllarini qo'ysangiz, sayt ularni avtomatik ishlatadi. Bo'lmasa, standart belgi ko'rsatiladi.

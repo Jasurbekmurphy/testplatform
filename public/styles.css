@@ -352,3 +352,6 @@ body.is-landing .site-foot{margin-top:0;padding-top:28px}
   .cta-strip{padding:22px}
   .bank-card{padding:20px;transform:none}
 }
+.brand-logo{height:38px;width:auto;max-width:160px;display:block}
+.brand-logo[hidden]{display:none}
+.brand-mark[hidden]{display:none}

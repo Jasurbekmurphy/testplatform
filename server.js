@@ -429,4 +429,4 @@ app.use((err, req, res, next) => {
 // clean expired sessions daily
 setInterval(() => db.prepare("DELETE FROM sessions WHERE created_at < ?").run(now() - SESSION_DAYS * 86400e3), 86400e3).unref();
 
-app.listen(PORT, () => console.log(`Texnikum Test: http://localhost:${PORT}`));
+app.listen(PORT, () => console.log(`TestPlatform: http://localhost:${PORT}`));

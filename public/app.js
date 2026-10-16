@@ -131,7 +131,7 @@ function donateHTML(){ return `<section class="lp-band lp-donate" id="donate"><d
   <div class="bank-card" aria-label="Karta raqami ${CARD_NO}">
     <div class="spread"><span class="bc-chip"></span><b class="bc-brand">HUMO</b></div>
     <div class="bc-num">${CARD_NO.replace(/(\d{4})(?=\d)/g,"$1 ")}</div>
-    <div class="spread"><span><small>Texnikum Test Markazi</small>Qo'llab-quvvatlash kartasi</span><button class="bc-copy" data-act="copy-card">Nusxalash</button></div>
+    <div class="spread"><span><small>TestPlatform</small>Qo'llab-quvvatlash kartasi</span><button class="bc-copy" data-act="copy-card">Nusxalash</button></div>
   </div></div></section>`; }
 function authHTML(){
   const reg = authMode==="register";
@@ -144,9 +144,9 @@ function authHTML(){
   return `<div class="landing">
   <section class="lp-band lp-hero"><div class="lp-in hero-grid">
     <div class="stack hero-copy">
-      <span class="badge">✦ Texnikum talabalari uchun</span>
-      <h1>Kitob bo'limlari bo'yicha testlar — <span class="grad-text">bir joyda, qulay va tez</span></h1>
-      <p class="lead">Guruh yarating, savollarni kiriting yoki Excel/Word'dan yuklang, havolani sheriklaringizga yuboring va birga yeching. Natijalar va reyting avtomatik saqlanadi.</p>
+      <span class="badge">✦ O'quvchilar, talabalar va o'qituvchilar uchun</span>
+      <h1>Kitob va fanlar bo'yicha testlar — <span class="grad-text">bir joyda, qulay va tez</span></h1>
+      <p class="lead">Maktab o'quvchilari, kollej va texnikum talabalari, OTM talabalari, o'qituvchilar — kitob yoki fan bo'yicha tayyorlanayotgan har kim uchun. Guruh yarating, savollarni kiriting yoki Excel/Word'dan yuklang, havolani yuboring va birga yeching. Natijalar va reyting avtomatik saqlanadi.</p>
       <div class="row"><button class="primary amber lg" data-auth="register" data-scroll>Boshlash — bepul</button><button class="lg" data-auth="login" data-scroll>Kirish</button></div>
       <div class="trust"><span>✓ 5 ballik baho</span><span>✓ Excel / Word</span><span>✓ Telefon uchun qulay</span><span>✓ Tungi rejim</span></div>
     </div>
@@ -203,7 +203,7 @@ function homeHTML(){
   return `
   <section class="hero">
     <div class="stack">
-      <span class="eyebrow">Kitob bo'limlari bo'yicha testlar</span>
+      <span class="eyebrow">Kitob va fanlar bo'yicha testlar</span>
       <h1>Guruh yarating, savollarni kiriting, sheriklaringiz bilan birga yeching</h1>
       <p class="muted">Har bir bo'lim uchun alohida test va barcha mavzulardan aralash test. Javob darhol tekshiriladi, natijalar saqlanadi.</p>
       <div class="row"><button class="primary" data-act="new-group">Yangi guruh yaratish</button><button data-act="join">Kod bilan kirish</button></div>
@@ -666,9 +666,9 @@ function doneHTML(){
 const splitTitles = v => v.split(/\n/).map(s=>s.replace(/^\s*\d+\s*[\.\)\-]\s*/,"").trim()).filter(Boolean);
 function newGroupDialog(){
   modal(`<h3>Yangi guruh</h3>
-    <label class="f">Guruh nomi<input id="ng-name" placeholder="Masalan: EL-21 guruhi"></label>
-    <label class="f">Kitob yoki fan<input id="ng-book" placeholder="Masalan: Elektrotexnika asoslari"></label>
-    <label class="f">Bo'limlar (har qatorga bittadan, keyin ham qo'shish mumkin)<textarea id="ng-secs" rows="5" placeholder="Elektr toki&#10;Om qonuni&#10;Kirxgof qonunlari"></textarea></label>
+    <label class="f">Guruh nomi<input id="ng-name" placeholder="Masalan: 10-B sinf"></label>
+    <label class="f">Kitob yoki fan<input id="ng-book" placeholder="Masalan: Matematika"></label>
+    <label class="f">Bo'limlar (har qatorga bittadan, keyin ham qo'shish mumkin)<textarea id="ng-secs" rows="5" placeholder="Natural sonlar&#10;Kasrlar&#10;Tenglamalar"></textarea></label>
     <label class="f">Yoki faqat bo'limlar soni<input id="ng-count" type="number" min="0" max="300" placeholder="Masalan: 30"></label>
     <label class="toggle small"><input type="checkbox" id="ng-mce">A'zolar ham savol qo'sha olsin</label>
     <div class="row"><button class="primary" id="ng-go">Yaratish</button><button data-close>Bekor qilish</button></div>`, m => {
@@ -693,7 +693,7 @@ function joinDialog(){
   });
 }
 function addSectionsDialog(){
-  modal(`<h3>Bo'lim qo'shish</h3><label class="f">Bo'lim nomlari (har qatorga bittadan)<textarea id="as" rows="6" placeholder="Om qonuni&#10;Kirxgof qonunlari"></textarea></label>
+  modal(`<h3>Bo'lim qo'shish</h3><label class="f">Bo'lim nomlari (har qatorga bittadan)<textarea id="as" rows="6" placeholder="Kasrlar&#10;Tenglamalar"></textarea></label>
     <div class="row"><button class="primary" id="asgo">Qo'shish</button><button data-close>Bekor qilish</button></div>`, m => {
     $("#as",m).focus();
     $("#asgo",m).addEventListener("click", async e => {
