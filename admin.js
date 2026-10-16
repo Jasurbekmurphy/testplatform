@@ -43,7 +43,7 @@ if (cmd === "users") {
   const fs = require("fs");
   const rl = require("readline").createInterface({ input: process.stdin, output: process.stdout });
   rl.question("Gmail manzili (xatlar shu manzildan yuboriladi): ", user => {
-    process.stdout.write("Gmail ilova paroli (16 harf, yozganda ko'rinmaydi): ");
+    console.log("Gmail ilova paroli (16 harf). Joylashtiring va Enter bosing, yozganingiz ko'rinmaydi:");
     rl._writeToOutput = () => {};
     rl.question("", pass => {
       rl.close(); console.log();
