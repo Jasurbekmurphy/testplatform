@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS mistakes (
   PRIMARY KEY (user_id, question_id)
 );
 `);
+if (!db.prepare("PRAGMA table_info(users)").all().some(c => c.name === "recovery_hash")) db.exec("ALTER TABLE users ADD COLUMN recovery_hash TEXT");
 
 /* ---------------- helpers ---------------- */
 const norm = s => String(s || "").toLowerCase().replace(/[‘’`ʻʼ']/g, "'").normalize("NFKC").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
@@ -100,6 +101,18 @@ function checkPassword(pw, stored) {
   const hash = crypto.scryptSync(pw, Buffer.from(saltHex, "hex"), 64);
   return crypto.timingSafeEqual(hash, Buffer.from(hashHex, "hex"));
 }
+// one-time recovery code shown to the user, e.g. "K7QM-3XRP-9TDA"; only its hash is stored
+const normRecovery = c => String(c || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+function newRecovery(userId) {
+  const raw = Array.from(crypto.randomBytes(12), b => CODE_ABC[b % CODE_ABC.length]).join("");
+  db.prepare("UPDATE users SET recovery_hash = ? WHERE id = ?").run(hashPassword(raw), userId);
+  return raw.match(/.{4}/g).join("-");
+}
+function setPassword(userId, pw) {
+  db.prepare("UPDATE users SET pass_hash = ? WHERE id = ?").run(hashPassword(pw), userId);
+  db.prepare("DELETE FROM sessions WHERE user_id = ?").run(userId);
+}
+const PW_RULE = "Parol kamida 6 ta belgidan iborat bo'lsin.";
 class HttpError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
 const fail = (status, msg) => { throw new HttpError(status, msg); };
 
@@ -151,11 +164,12 @@ app.post("/api/register", wrap((req, res) => {
   const name = str(req.body.name, 60), username = str(req.body.username, 30).toLowerCase(), password = String(req.body.password || "");
   if (!name) fail(400, "Ismingizni yozing.");
   if (!/^[a-z0-9_.]{3,30}$/.test(username)) fail(400, "Login 3–30 ta lotin harf, raqam, _ yoki . bo'lsin.");
-  if (password.length < 6) fail(400, "Parol kamida 6 ta belgidan iborat bo'lsin.");
+  if (password.length < 6) fail(400, PW_RULE);
   if (db.prepare("SELECT 1 FROM users WHERE username = ?").get(username)) fail(409, "Bu login band. Boshqasini tanlang.");
   const info = db.prepare("INSERT INTO users (name, username, pass_hash, created_at) VALUES (?, ?, ?, ?)").run(name, username, hashPassword(password), now());
+  const recoveryCode = newRecovery(info.lastInsertRowid);
   setSession(res, info.lastInsertRowid);
-  return { user: { id: info.lastInsertRowid, name, username } };
+  return { user: { id: info.lastInsertRowid, name, username }, recoveryCode };
 }));
 app.post("/api/login", wrap((req, res) => {
   limit("login:" + req.ip, 20, 600e3);
@@ -172,6 +186,35 @@ app.post("/api/logout", wrap((req, res) => {
   return { ok: true };
 }));
 app.get("/api/me", wrap(req => ({ user: req.user })));
+
+// forgotten password: login + recovery code -> new password (the code is rotated)
+app.post("/api/reset-password", wrap((req, res) => {
+  limit("reset:" + req.ip, 10, 3600e3);
+  const username = str(req.body.username, 30).toLowerCase(), code = normRecovery(req.body.code), password = String(req.body.password || "");
+  if (password.length < 6) fail(400, PW_RULE);
+  const u = db.prepare("SELECT * FROM users WHERE username = ?").get(username);
+  if (!u || !u.recovery_hash || code.length !== 12 || !checkPassword(code, u.recovery_hash)) fail(401, "Login yoki tiklash kodi noto'g'ri.");
+  setPassword(u.id, password);
+  const recoveryCode = newRecovery(u.id);
+  setSession(res, u.id);
+  return { user: { id: u.id, name: u.name, username: u.username }, recoveryCode };
+}));
+app.post("/api/me/password", auth, wrap((req, res) => {
+  limit("chpw:" + req.user.id, 10, 600e3);
+  const current = String(req.body.current || ""), password = String(req.body.password || "");
+  const u = db.prepare("SELECT pass_hash FROM users WHERE id = ?").get(req.user.id);
+  if (!checkPassword(current, u.pass_hash)) fail(400, "Hozirgi parol noto'g'ri.");
+  if (password.length < 6) fail(400, PW_RULE);
+  setPassword(req.user.id, password);
+  setSession(res, req.user.id);
+  return { ok: true };
+}));
+app.post("/api/me/recovery", auth, wrap(req => {
+  limit("chpw:" + req.user.id, 10, 600e3);
+  const u = db.prepare("SELECT pass_hash FROM users WHERE id = ?").get(req.user.id);
+  if (!checkPassword(String(req.body.password || ""), u.pass_hash)) fail(400, "Parol noto'g'ri.");
+  return { recoveryCode: newRecovery(req.user.id) };
+}));
 
 /* ----- groups ----- */
 function loadGroup(code) {
@@ -248,6 +291,25 @@ app.delete("/api/groups/:code/membership", auth, wrap(req => {
   if (isOwner(g, req.user)) fail(400, "Guruh egasi guruhdan chiqa olmaydi. Uni o'chirishingiz mumkin.");
   db.prepare("DELETE FROM members WHERE group_id = ? AND user_id = ?").run(g.id, req.user.id);
   return { ok: true };
+}));
+
+// members list for the group owner, who can reset a member's forgotten password.
+// Members who own a group themselves are excluded so one teacher can't take over another's account.
+const ownsGroups = id => !!db.prepare("SELECT 1 FROM groups WHERE owner_id = ?").get(id);
+app.get("/api/groups/:code/members", auth, wrap(req => {
+  const g = loadGroup(req.params.code); requireOwner(g, req.user);
+  const rows = db.prepare(`SELECT u.id, u.name, u.username, m.joined_at AS joinedAt FROM members m JOIN users u ON u.id = m.user_id
+    WHERE m.group_id = ? ORDER BY u.name COLLATE NOCASE`).all(g.id);
+  return { members: rows.map(r => ({ ...r, canReset: r.id !== req.user.id && !ownsGroups(r.id) })) };
+}));
+app.post("/api/groups/:code/members/:uid/reset-password", auth, wrap(req => {
+  const g = loadGroup(req.params.code); requireOwner(g, req.user);
+  const uid = Number(req.params.uid);
+  if (!db.prepare("SELECT 1 FROM members WHERE group_id = ? AND user_id = ?").get(g.id, uid)) fail(404, "Bu foydalanuvchi guruhda emas.");
+  if (uid === req.user.id || ownsGroups(uid)) fail(403, "Bu foydalanuvchining parolini tiklay olmaysiz: u o'z guruhiga ega.");
+  const temp = Array.from(crypto.randomBytes(8), b => CODE_ABC[b % CODE_ABC.length]).join("").toLowerCase();
+  setPassword(uid, temp);
+  return { password: temp };
 }));
 
 /* ----- sections ----- */

@@ -71,7 +71,7 @@ async function route(){
   closeModal(); clearInterval(tick);
   const m = location.pathname.match(/^\/g\/([A-Za-z0-9]{4,10})\/?$/);
   if (!S.user){ S.view = "auth"; S.pendingCode = m ? m[1].toUpperCase() : null; render(); return; }
-  if (m){ const code = m[1].toUpperCase(); if (S.code !== code || S.view === "home" || S.view === "auth"){ S.tab = "tests"; S.importRows = null; } S.code = code; S.view = "group"; S.quiz = null; render(); await loadGroup(); return; }
+  if (m){ const code = m[1].toUpperCase(); if (S.code !== code || S.view === "home" || S.view === "auth"){ S.tab = "tests"; S.importRows = null; S.members = null; } S.code = code; S.view = "group"; S.quiz = null; render(); await loadGroup(); return; }
   S.view = "home"; S.code = null; S.data = null; S.quiz = null; render(); loadGroups();
 }
 async function loadGroups(){
@@ -95,7 +95,7 @@ function renderUser(){
   const theme = document.documentElement.dataset.theme;
   const themeBtn = `<button class="ghost small" data-act="theme" title="Mavzu rangini almashtirish">${theme==="dark"?"Yorug' rejim":"Tungi rejim"}</button>`;
   const ini = S.user ? (S.user.name||"?").trim().split(/\s+/).slice(0,2).map(w=>w[0]).join("").toUpperCase() : "";
-  b.innerHTML = S.user ? `${themeBtn}<span class="avatar-pill" title="${esc(S.user.name)}"><span class="avatar">${esc(ini)}</span><span class="nm">${esc(S.user.name)}</span></span><button class="ghost small" data-act="logout">Chiqish</button>`
+  b.innerHTML = S.user ? `${themeBtn}<button class="avatar-pill" data-act="profile" title="Profil va parol"><span class="avatar">${esc(ini)}</span><span class="nm">${esc(S.user.name)}</span></button><button class="ghost small" data-act="logout">Chiqish</button>`
     : `<nav class="lp-nav"><a href="#features">Imkoniyatlar</a><a href="#how">Qanday ishlaydi</a><a href="#donate">Qo'llab-quvvatlash</a></nav>${themeBtn}<button class="small" data-auth="login" data-scroll>Kirish</button><button class="primary small" data-auth="register" data-scroll>Ro'yxatdan o'tish</button>`;
   document.body.classList.toggle("is-landing", !S.user);
 }
@@ -160,6 +160,7 @@ function authHTML(){
         <label class="f">Parol<input id="a-pass" type="password" autocomplete="${reg?"new-password":"current-password"}" required minlength="6"></label>
         <p class="err" id="a-err"></p>
         <button class="primary" type="submit">${reg?"Ro'yxatdan o'tish":"Kirish"}</button>
+        ${reg?"":`<button type="button" class="ghost small forgot" data-act="forgot">Parol yoki loginni unutdingizmi?</button>`}
       </form>
     </div>
   </div></section>
@@ -194,7 +195,77 @@ async function submitAuth(e){
     S.user = r.user; renderUser();
     const code = S.pendingCode; S.pendingCode = null;
     go(code ? "/g/"+code : "/", true);
+    if (r.recoveryCode) recoveryDialog(r.recoveryCode, true);
   } catch(err){ $("#a-err").textContent = err.message; btn.disabled = false; }
+}
+
+/* ---------- password recovery & profile ---------- */
+function recoveryDialog(code, isNew){
+  modal(`<h3>Parolni tiklash kodi</h3>
+    <p>${isNew?"Hisobingiz yaratildi. ":""}Parolni unutsangiz, shu kod bilan yangi parol o'rnatasiz. Uni yozib oling yoki skrinshot qiling: kod faqat hozir ko'rsatiladi.</p>
+    <div class="code recovery-code">${esc(code)}</div>
+    <div class="row"><button id="rc-copy">Nusxalash</button><button class="primary" data-close>Yozib oldim</button></div>`, m => {
+    $("#rc-copy",m).addEventListener("click", () => copy(code));
+  });
+}
+function forgotDialog(){
+  modal(`<h3>Parolni tiklash</h3>
+    <p class="small muted">Ro'yxatdan o'tganda berilgan tiklash kodi bo'lsa, yangi parolni shu yerda o'rnating.</p>
+    <form id="fg" class="stack">
+      <label class="f">Login<input id="fg-user" autocomplete="username" autocapitalize="off" required value="${esc($("#a-user")?.value||"")}"></label>
+      <label class="f">Tiklash kodi<input id="fg-code" autocapitalize="characters" autocomplete="off" required placeholder="XXXX-XXXX-XXXX"></label>
+      <label class="f">Yangi parol<input id="fg-pass" type="password" autocomplete="new-password" required minlength="6"></label>
+      <p class="err" id="fg-err"></p>
+      <div class="row"><button class="primary" type="submit">Parolni yangilash</button><button type="button" data-close>Bekor qilish</button></div>
+    </form>
+    <div class="notice info">Kod yo'q yoki loginni unutdingizmi? Siz qo'shilgan guruh egasi (o'qituvchingiz) loginingizni ko'ra oladi va parolingizni tiklab bera oladi: guruh → Sozlamalar → A'zolar.</div>`, m => {
+    $("#fg",m).addEventListener("submit", async e => {
+      e.preventDefault();
+      const btn = $("button[type=submit]",m); btn.disabled = true;
+      try {
+        const r = await api("POST","/api/reset-password",{ username:$("#fg-user",m).value.trim(), code:$("#fg-code",m).value, password:$("#fg-pass",m).value });
+        S.user = r.user; renderUser();
+        const code = S.pendingCode; S.pendingCode = null;
+        go(code ? "/g/"+code : "/", true);
+        toast("Parol yangilandi");
+        recoveryDialog(r.recoveryCode);
+      } catch(err){ $("#fg-err",m).textContent = err.message; btn.disabled = false; }
+    });
+  });
+}
+function profileDialog(){
+  modal(`<h3>${esc(S.user.name)}</h3>
+    <p class="small muted">Login: <b>${esc(S.user.username)}</b></p>
+    <form id="pw" class="stack">
+      <input type="text" autocomplete="username" value="${esc(S.user.username)}" hidden readonly>
+      <h4>Parolni o'zgartirish</h4>
+      <label class="f">Hozirgi parol<input id="pw-cur" type="password" autocomplete="current-password" required></label>
+      <label class="f">Yangi parol<input id="pw-new" type="password" autocomplete="new-password" required minlength="6"></label>
+      <p class="err" id="pw-err"></p>
+      <div class="row"><button class="primary" type="submit">Saqlash</button><button type="button" id="pw-rc">Yangi tiklash kodi olish</button><button type="button" data-close>Yopish</button></div>
+    </form>`, m => {
+    $("#pw",m).addEventListener("submit", async e => {
+      e.preventDefault();
+      try { await api("POST","/api/me/password",{ current:$("#pw-cur",m).value, password:$("#pw-new",m).value }); closeModal(); toast("Parol o'zgartirildi"); }
+      catch(err){ $("#pw-err",m).textContent = err.message; }
+    });
+    $("#pw-rc",m).addEventListener("click", async () => {
+      const cur = $("#pw-cur",m).value;
+      if (!cur){ $("#pw-err",m).textContent = "Yangi kod olish uchun hozirgi parolni kiriting."; $("#pw-cur",m).focus(); return; }
+      try { const r = await api("POST","/api/me/recovery",{ password:cur }); recoveryDialog(r.recoveryCode); }
+      catch(err){ $("#pw-err",m).textContent = err.message; }
+    });
+  });
+}
+async function loadMembers(){
+  if (!S.data?.role.owner) return;
+  try { S.members = (await api("GET",`/api/groups/${S.code}/members`)).members; } catch(e){ toast(e.message); S.members = []; }
+  const box = $("#members"); if (box) box.innerHTML = membersHTML();
+}
+function membersHTML(){
+  if (!S.members) return `<p class="muted">Yuklanmoqda…</p>`;
+  if (!S.members.length) return `<p class="muted">A'zolar yo'q.</p>`;
+  return `<div class="tw"><table><thead><tr><th>Ism</th><th>Login</th><th></th></tr></thead><tbody>${S.members.map(u=>`<tr><td>${esc(u.name)}</td><td><b>${esc(u.username)}</b></td><td>${u.canReset?`<button class="small" data-resetpw="${u.id}">Parolni tiklash</button>`:""}</td></tr>`).join("")}</tbody></table></div>`;
 }
 
 /* ---------- home ---------- */
@@ -560,6 +631,11 @@ function settingsTab(){
     <div class="stack" style="gap:8px">${sections().map((s,i)=>`<div class="optrow" style="grid-template-columns:auto 1fr auto"><span class="lt">${i+1}</span><input data-secname="${s.id}" value="${esc(s.title)}"><div class="secbtns"><button class="ghost small" data-move="up" data-sid="${s.id}" ${i===0?"disabled":""} aria-label="Yuqoriga">↑</button><button class="ghost small" data-move="down" data-sid="${s.id}" ${i===sections().length-1?"disabled":""} aria-label="Pastga">↓</button><button class="ghost small danger" data-delsec="${s.id}">O'chirish</button></div></div>`).join("") || `<p class="muted">Bo'limlar yo'q.</p>`}</div>
     <div class="row"><button data-act="add-sections">+ Bo'lim qo'shish</button>${sections().length?`<button data-act="save-secnames">Nomlarni saqlash</button>`:""}</div>
   </div>` : ""}
+  ${own ? `<div class="panel">
+    <h3>A'zolar</h3>
+    <p class="small muted">A'zo loginini yoki parolini unutsa, shu yerdan ko'rasiz va parolini tiklaysiz. Yangi vaqtinchalik parol faqat sizga bir marta ko'rsatiladi.</p>
+    <div id="members">${membersHTML()}</div>
+  </div>` : ""}
   <div class="panel">
     <h3>Xavfli amallar</h3>
     <div class="row">${own ? `<button class="danger" data-act="del-group">Guruhni butunlay o'chirish</button>` : `<button class="danger" data-act="leave">Guruhdan chiqish</button>`}</div>
@@ -714,7 +790,14 @@ document.addEventListener("click", async e => {
   const t = e.target.closest("button"); if (!t || t.closest("#modal-root")) return;
   const a = t.dataset.act;
   if (t.dataset.auth){ authMode = t.dataset.auth; render(); if (t.hasAttribute("data-scroll")){ const c = $("#auth-card"); c?.scrollIntoView({behavior:"smooth",block:"center"}); setTimeout(()=>$("#authform input")?.focus({preventScroll:true}), 400); } return; }
-  if (t.dataset.tab){ S.tab = t.dataset.tab; editing=null; render(); if (S.tab==="results") loadResults(); return; }
+  if (t.dataset.tab){ S.tab = t.dataset.tab; editing=null; render(); if (S.tab==="results") loadResults(); if (S.tab==="settings") loadMembers(); return; }
+  if (t.dataset.resetpw){ const u = S.members?.find(x=>x.id===+t.dataset.resetpw); if (!u) return;
+    confirmDialog(`${esc(u.name)} (${esc(u.username)}) uchun yangi vaqtinchalik parol yaratilsinmi? Eski parol ishlamay qoladi.`,"Parolni tiklash", async()=>{
+      try { const r = await api("POST",`/api/groups/${S.code}/members/${u.id}/reset-password`); 
+        modal(`<h3>Yangi parol</h3><p>${esc(u.name)} endi shu ma'lumotlar bilan kiradi. Ularni o'ziga yuboring, kirgach parolni o'zgartirishni ayting (ismi ustiga bosib).</p>
+          <p>Login: <b>${esc(u.username)}</b></p><div class="code recovery-code">${esc(r.password)}</div>
+          <div class="row"><button id="np-copy">Nusxalash</button><button class="primary" data-close>Yopish</button></div>`, m => $("#np-copy",m).addEventListener("click", () => copy(`Login: ${u.username}\nParol: ${r.password}`)));
+      } catch(err){ toast(err.message); } }); return; }
   if (t.dataset.start){ startQuizDialog(t.dataset.start, +t.dataset.sid); return; }
   if (t.dataset.pick){ pick(+t.dataset.pick); return; }
   if (t.dataset.addq){ S.tab="questions"; S.filterSec=t.dataset.addq; editing=null; render(); $("#qq")?.focus(); return; }
@@ -727,7 +810,9 @@ document.addEventListener("click", async e => {
   switch(a){
     case "theme": { const cur = document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"); const nt = cur==="dark"?"light":"dark"; document.documentElement.dataset.theme = nt; store.set("theme", nt); try{ localStorage.setItem("tt:theme", nt); }catch{} renderUser(); break; }
     case "copy-card": copy(CARD_NO); break;
-    case "logout": await api("POST","/api/logout").catch(()=>{}); S.user=null; S.groups=null; renderUser(); go("/"); break;
+    case "forgot": forgotDialog(); break;
+    case "profile": profileDialog(); break;
+    case "logout": await api("POST","/api/logout").catch(()=>{}); S.user=null; authMode="login"; S.groups=null; renderUser(); go("/"); break;
     case "new-group": newGroupDialog(); break;
     case "join": joinDialog(); break;
     case "share": copy(shareLink()); break;
