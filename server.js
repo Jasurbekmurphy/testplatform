@@ -82,7 +82,9 @@ CREATE TABLE IF NOT EXISTS mistakes (
   PRIMARY KEY (user_id, question_id)
 );
 `);
-if (!db.prepare("PRAGMA table_info(users)").all().some(c => c.name === "recovery_hash")) db.exec("ALTER TABLE users ADD COLUMN recovery_hash TEXT");
+const userCols = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
+if (!userCols.includes("recovery_hash")) db.exec("ALTER TABLE users ADD COLUMN recovery_hash TEXT");
+if (!userCols.includes("is_admin")) db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0");
 
 /* ---------------- helpers ---------------- */
 const norm = s => String(s || "").toLowerCase().replace(/[‘’`ʻʼ']/g, "'").normalize("NFKC").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
@@ -112,6 +114,7 @@ function setPassword(userId, pw) {
   db.prepare("UPDATE users SET pass_hash = ? WHERE id = ?").run(hashPassword(pw), userId);
   db.prepare("DELETE FROM sessions WHERE user_id = ?").run(userId);
 }
+const tempPassword = () => Array.from(crypto.randomBytes(8), b => CODE_ABC[b % CODE_ABC.length]).join("").toLowerCase();
 const PW_RULE = "Parol kamida 6 ta belgidan iborat bo'lsin.";
 class HttpError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
 const fail = (status, msg) => { throw new HttpError(status, msg); };
@@ -142,8 +145,8 @@ app.use((req, res, next) => {
   const sid = parseCookies(req.headers.cookie).sid;
   req.user = null;
   if (sid) {
-    const row = db.prepare(`SELECT u.id, u.name, u.username, s.created_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?`).get(sid);
-    if (row && now() - row.created_at < SESSION_DAYS * 86400e3) req.user = { id: row.id, name: row.name, username: row.username };
+    const row = db.prepare(`SELECT u.id, u.name, u.username, u.is_admin, s.created_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?`).get(sid);
+    if (row && now() - row.created_at < SESSION_DAYS * 86400e3) req.user = { id: row.id, name: row.name, username: row.username, isAdmin: !!row.is_admin };
   }
   next();
 });
@@ -177,7 +180,7 @@ app.post("/api/login", wrap((req, res) => {
   const u = db.prepare("SELECT * FROM users WHERE username = ?").get(username);
   if (!u || !checkPassword(password, u.pass_hash)) fail(401, "Login yoki parol noto'g'ri.");
   setSession(res, u.id);
-  return { user: { id: u.id, name: u.name, username: u.username } };
+  return { user: { id: u.id, name: u.name, username: u.username, isAdmin: !!u.is_admin } };
 }));
 app.post("/api/logout", wrap((req, res) => {
   const sid = parseCookies(req.headers.cookie).sid;
@@ -214,6 +217,26 @@ app.post("/api/me/recovery", auth, wrap(req => {
   const u = db.prepare("SELECT pass_hash FROM users WHERE id = ?").get(req.user.id);
   if (!checkPassword(String(req.body.password || ""), u.pass_hash)) fail(400, "Parol noto'g'ri.");
   return { recoveryCode: newRecovery(req.user.id) };
+}));
+
+/* ----- site admin (made with: node admin.js make-admin <login>) ----- */
+const adminOnly = (req, res, next) => req.user?.isAdmin ? next() : res.status(403).json({ error: "Bu bo'lim faqat administrator uchun." });
+app.get("/api/admin/users", auth, adminOnly, wrap(req => {
+  const q = "%" + str(req.query.q, 60).replace(/[%_]/g, "") + "%";
+  const total = db.prepare("SELECT COUNT(*) AS n FROM users").get().n;
+  const users = db.prepare(`SELECT u.id, u.name, u.username, u.created_at AS createdAt, u.is_admin AS isAdmin,
+      (SELECT COUNT(*) FROM groups g WHERE g.owner_id = u.id) AS groups,
+      (SELECT COUNT(*) FROM results r WHERE r.user_id = u.id) AS tests
+    FROM users u WHERE u.name LIKE @q OR u.username LIKE @q ORDER BY u.created_at DESC LIMIT 300`).all({ q });
+  return { total, users: users.map(u => ({ ...u, isAdmin: !!u.isAdmin })) };
+}));
+app.post("/api/admin/users/:id/reset-password", auth, adminOnly, wrap(req => {
+  const u = db.prepare("SELECT id, is_admin FROM users WHERE id = ?").get(Number(req.params.id));
+  if (!u) fail(404, "Foydalanuvchi topilmadi.");
+  if (u.id === req.user.id || u.is_admin) fail(403, "Administrator parolini bu yerdan tiklab bo'lmaydi. Profil orqali o'zgartiring.");
+  const temp = tempPassword();
+  setPassword(u.id, temp);
+  return { password: temp };
 }));
 
 /* ----- groups ----- */
@@ -307,7 +330,7 @@ app.post("/api/groups/:code/members/:uid/reset-password", auth, wrap(req => {
   const uid = Number(req.params.uid);
   if (!db.prepare("SELECT 1 FROM members WHERE group_id = ? AND user_id = ?").get(g.id, uid)) fail(404, "Bu foydalanuvchi guruhda emas.");
   if (uid === req.user.id || ownsGroups(uid)) fail(403, "Bu foydalanuvchining parolini tiklay olmaysiz: u o'z guruhiga ega.");
-  const temp = Array.from(crypto.randomBytes(8), b => CODE_ABC[b % CODE_ABC.length]).join("").toLowerCase();
+  const temp = tempPassword();
   setPassword(uid, temp);
   return { password: temp };
 }));
