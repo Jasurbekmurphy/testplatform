@@ -361,3 +361,4 @@ button.avatar-pill{color:inherit;cursor:pointer;box-shadow:none;padding:3px 12px
 @media (max-width:480px){button.avatar-pill{padding:3px}}
 button.forgot{align-self:center;font-weight:600}
 .recovery-code{display:block;text-align:center;font-size:22px;letter-spacing:.08em;padding:12px;margin:6px 0 4px;user-select:all}
+[hidden]{display:none!important}

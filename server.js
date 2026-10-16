@@ -4,6 +4,7 @@ const fs = require("fs");
 const crypto = require("crypto");
 const express = require("express");
 const Database = require("better-sqlite3");
+const nodemailer = require("nodemailer");
 
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
@@ -85,6 +86,26 @@ CREATE TABLE IF NOT EXISTS mistakes (
 const userCols = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
 if (!userCols.includes("recovery_hash")) db.exec("ALTER TABLE users ADD COLUMN recovery_hash TEXT");
 if (!userCols.includes("is_admin")) db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0");
+if (!userCols.includes("email")) db.exec("ALTER TABLE users ADD COLUMN email TEXT");
+db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS users_email ON users(email COLLATE NOCASE) WHERE email IS NOT NULL;
+CREATE TABLE IF NOT EXISTS email_codes (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  code_hash TEXT NOT NULL, tries INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL
+);`);
+
+/* ---------------- email (settings in DATA_DIR/mail.json, written by: node admin.js mail-setup) ---------------- */
+const MAIL_FILE = path.join(DATA_DIR, "mail.json");
+let mailer = null, mailFrom = "";
+function loadMail() {
+  try {
+    const c = JSON.parse(fs.readFileSync(MAIL_FILE, "utf8"));
+    mailer = nodemailer.createTransport({ host: c.host || "smtp.gmail.com", port: c.port || 465, secure: (c.port || 465) === 465, auth: { user: c.user, pass: c.pass } });
+    mailFrom = `"TestPlatform" <${c.user}>`;
+  } catch { mailer = null; }
+}
+loadMail();
+fs.watchFile(MAIL_FILE, { interval: 5000 }, loadMail);
+const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,190}\.[a-z]{2,}$/i;
 
 /* ---------------- helpers ---------------- */
 const norm = s => String(s || "").toLowerCase().replace(/[‘’`ʻʼ']/g, "'").normalize("NFKC").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
@@ -151,7 +172,7 @@ app.use((req, res, next) => {
   next();
 });
 const auth = (req, res, next) => req.user ? next() : res.status(401).json({ error: "Avval tizimga kiring." });
-const wrap = fn => (req, res, next) => { try { const r = fn(req, res); if (r !== undefined) res.json(r); } catch (e) { next(e); } };
+const wrap = fn => async (req, res, next) => { try { const r = await fn(req, res); if (r !== undefined && !res.headersSent) res.json(r); } catch (e) { next(e); } };
 
 // simple in-memory rate limit for login/register
 const hits = new Map();
@@ -162,22 +183,26 @@ function limit(key, max, windowMs) {
 }
 
 /* ----- auth ----- */
+const findUser = id => id.includes("@") ? db.prepare("SELECT * FROM users WHERE email = ?").get(id) : db.prepare("SELECT * FROM users WHERE username = ?").get(id);
 app.post("/api/register", wrap((req, res) => {
   limit("reg:" + req.ip, 10, 3600e3);
   const name = str(req.body.name, 60), username = str(req.body.username, 30).toLowerCase(), password = String(req.body.password || "");
+  const email = str(req.body.email, 254).toLowerCase();
   if (!name) fail(400, "Ismingizni yozing.");
+  if (!EMAIL_RE.test(email)) fail(400, "Email manzilingizni to'g'ri yozing. Parolni unutsangiz, tiklash kodi shu manzilga yuboriladi.");
+  if (db.prepare("SELECT 1 FROM users WHERE email = ?").get(email)) fail(409, "Bu email bilan allaqachon ro'yxatdan o'tilgan. Kirish yoki parolni tiklashdan foydalaning.");
   if (!/^[a-z0-9_.]{3,30}$/.test(username)) fail(400, "Login 3–30 ta lotin harf, raqam, _ yoki . bo'lsin.");
   if (password.length < 6) fail(400, PW_RULE);
   if (db.prepare("SELECT 1 FROM users WHERE username = ?").get(username)) fail(409, "Bu login band. Boshqasini tanlang.");
-  const info = db.prepare("INSERT INTO users (name, username, pass_hash, created_at) VALUES (?, ?, ?, ?)").run(name, username, hashPassword(password), now());
+  const info = db.prepare("INSERT INTO users (name, username, email, pass_hash, created_at) VALUES (?, ?, ?, ?, ?)").run(name, username, email, hashPassword(password), now());
   const recoveryCode = newRecovery(info.lastInsertRowid);
   setSession(res, info.lastInsertRowid);
   return { user: { id: info.lastInsertRowid, name, username }, recoveryCode };
 }));
 app.post("/api/login", wrap((req, res) => {
   limit("login:" + req.ip, 20, 600e3);
-  const username = str(req.body.username, 30).toLowerCase(), password = String(req.body.password || "");
-  const u = db.prepare("SELECT * FROM users WHERE username = ?").get(username);
+  const username = str(req.body.username, 254).toLowerCase(), password = String(req.body.password || "");
+  const u = findUser(username);
   if (!u || !checkPassword(password, u.pass_hash)) fail(401, "Login yoki parol noto'g'ri.");
   setSession(res, u.id);
   return { user: { id: u.id, name: u.name, username: u.username, isAdmin: !!u.is_admin } };
@@ -188,7 +213,54 @@ app.post("/api/logout", wrap((req, res) => {
   res.setHeader("Set-Cookie", "sid=; HttpOnly; Path=/; Max-Age=0");
   return { ok: true };
 }));
-app.get("/api/me", wrap(req => ({ user: req.user })));
+app.get("/api/me", wrap(req => {
+  if (!req.user) return { user: null };
+  const email = db.prepare("SELECT email FROM users WHERE id = ?").get(req.user.id).email;
+  return { user: { ...req.user, email: email || "" }, mailReady: !!mailer };
+}));
+
+// forgotten password by email: send a 6-digit code, then exchange it for a new password
+app.post("/api/forgot/send", wrap(async (req, res) => {
+  limit("fsend:" + req.ip, 5, 3600e3);
+  if (!mailer) fail(503, "Email orqali tiklash hali sozlanmagan. Guruh egangiz yoki administratorga murojaat qiling.");
+  const u = findUser(str(req.body.login, 254).toLowerCase());
+  if (u?.email) {
+    limit("fsend:u" + u.id, 3, 3600e3);
+    const code = String(crypto.randomInt(0, 1e6)).padStart(6, "0");
+    db.prepare("INSERT OR REPLACE INTO email_codes (user_id, code_hash, tries, created_at) VALUES (?, ?, 0, ?)").run(u.id, hashPassword(code), now());
+    try {
+      await mailer.sendMail({ from: mailFrom, to: u.email, subject: `TestPlatform: parolni tiklash kodi ${code}`,
+        text: `Assalomu alaykum, ${u.name}!\n\nTestPlatform'da parolni tiklash kodingiz: ${code}\nLoginingiz: ${u.username}\n\nKod 15 daqiqa amal qiladi. Agar siz so'ramagan bo'lsangiz, bu xatni e'tiborsiz qoldiring.` });
+    } catch (e) { console.error("mail:", e.message); fail(502, "Xat yuborilmadi. Birozdan keyin qayta urinib ko'ring."); }
+  }
+  // same answer whether or not the account exists, so emails can't be probed
+  res.json({ ok: true });
+}));
+app.post("/api/forgot/reset", wrap((req, res) => {
+  limit("freset:" + req.ip, 20, 3600e3);
+  const u = findUser(str(req.body.login, 254).toLowerCase()), password = String(req.body.password || "");
+  const row = u && db.prepare("SELECT * FROM email_codes WHERE user_id = ?").get(u.id);
+  if (!row || now() - row.created_at > 15 * 60e3 || row.tries >= 5) fail(400, "Kod eskirgan yoki noto'g'ri. Yangi kod so'rang.");
+  if (!checkPassword(String(req.body.code || "").replace(/\D/g, ""), row.code_hash)) {
+    db.prepare("UPDATE email_codes SET tries = tries + 1 WHERE user_id = ?").run(u.id);
+    fail(400, "Kod noto'g'ri.");
+  }
+  if (password.length < 6) fail(400, PW_RULE);
+  db.prepare("DELETE FROM email_codes WHERE user_id = ?").run(u.id);
+  setPassword(u.id, password);
+  setSession(res, u.id);
+  return { user: { id: u.id, name: u.name, username: u.username, isAdmin: !!u.is_admin } };
+}));
+app.post("/api/me/email", auth, wrap(req => {
+  limit("chpw:" + req.user.id, 10, 600e3);
+  const u = db.prepare("SELECT pass_hash FROM users WHERE id = ?").get(req.user.id);
+  if (!checkPassword(String(req.body.password || ""), u.pass_hash)) fail(400, "Parol noto'g'ri.");
+  const email = str(req.body.email, 254).toLowerCase();
+  if (!EMAIL_RE.test(email)) fail(400, "Email manzilini to'g'ri yozing.");
+  if (db.prepare("SELECT 1 FROM users WHERE email = ? AND id <> ?").get(email, req.user.id)) fail(409, "Bu email boshqa hisobga bog'langan.");
+  db.prepare("UPDATE users SET email = ? WHERE id = ?").run(email, req.user.id);
+  return { ok: true, email };
+}));
 
 // forgotten password: login + recovery code -> new password (the code is rotated)
 app.post("/api/reset-password", wrap((req, res) => {
@@ -224,10 +296,10 @@ const adminOnly = (req, res, next) => req.user?.isAdmin ? next() : res.status(40
 app.get("/api/admin/users", auth, adminOnly, wrap(req => {
   const q = "%" + str(req.query.q, 60).replace(/[%_]/g, "") + "%";
   const total = db.prepare("SELECT COUNT(*) AS n FROM users").get().n;
-  const users = db.prepare(`SELECT u.id, u.name, u.username, u.created_at AS createdAt, u.is_admin AS isAdmin,
+  const users = db.prepare(`SELECT u.id, u.name, u.username, u.email, u.created_at AS createdAt, u.is_admin AS isAdmin,
       (SELECT COUNT(*) FROM groups g WHERE g.owner_id = u.id) AS groups,
       (SELECT COUNT(*) FROM results r WHERE r.user_id = u.id) AS tests
-    FROM users u WHERE u.name LIKE @q OR u.username LIKE @q ORDER BY u.created_at DESC LIMIT 300`).all({ q });
+    FROM users u WHERE u.name LIKE @q OR u.username LIKE @q OR u.email LIKE @q ORDER BY u.created_at DESC LIMIT 300`).all({ q });
   return { total, users: users.map(u => ({ ...u, isAdmin: !!u.isAdmin })) };
 }));
 app.post("/api/admin/users/:id/reset-password", auth, adminOnly, wrap(req => {

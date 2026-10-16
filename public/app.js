@@ -155,8 +155,9 @@ function authHTML(){
       <h2>${reg?"Ro'yxatdan o'tish":"Kirish"}</h2>
       <div class="seg"><button data-auth="login" aria-pressed="${!reg}">Kirish</button><button data-auth="register" aria-pressed="${reg}">Ro'yxatdan o'tish</button></div>
       <form id="authform" class="stack">
-        ${reg?`<label class="f">Ism familiya<input id="a-name" autocomplete="name" required placeholder="Masalan: Aliyev Vali"></label>`:""}
-        <label class="f">Login<input id="a-user" autocomplete="username" required placeholder="masalan: vali_2005" autocapitalize="off"></label>
+        ${reg?`<label class="f">Ism familiya<input id="a-name" autocomplete="name" required placeholder="Masalan: Aliyev Vali"></label>
+        <label class="f">Email<input id="a-email" type="email" autocomplete="email" required placeholder="masalan: vali@gmail.com" autocapitalize="off"><span class="small muted">Parolni unutsangiz, tiklash kodi shu manzilga keladi.</span></label>`:""}
+        <label class="f">${reg?"Login":"Login yoki email"}<input id="a-user" autocomplete="username" required placeholder="${reg?"masalan: vali_2005":"login yoki email"}" autocapitalize="off"></label>
         <label class="f">Parol<input id="a-pass" type="password" autocomplete="${reg?"new-password":"current-password"}" required minlength="6"></label>
         <p class="err" id="a-err"></p>
         <button class="primary" type="submit">${reg?"Ro'yxatdan o'tish":"Kirish"}</button>
@@ -188,14 +189,14 @@ function sheetDemo(){ return `<div class="sheet-demo" aria-hidden="true">
 async function submitAuth(e){
   e.preventDefault();
   const body = { username: $("#a-user").value.trim(), password: $("#a-pass").value };
-  if (authMode==="register") body.name = $("#a-name").value.trim();
+  if (authMode==="register"){ body.name = $("#a-name").value.trim(); body.email = $("#a-email").value.trim(); }
   const btn = $('#authform button[type=submit]'); btn.disabled = true;
   try {
     const r = await api("POST", authMode==="register" ? "/api/register" : "/api/login", body);
     S.user = r.user; renderUser();
     const code = S.pendingCode; S.pendingCode = null;
     go(code ? "/g/"+code : "/", true);
-    if (r.recoveryCode) recoveryDialog(r.recoveryCode, true);
+    if (authMode==="login") askEmail();
   } catch(err){ $("#a-err").textContent = err.message; btn.disabled = false; }
 }
 
@@ -209,33 +210,77 @@ function recoveryDialog(code, isNew){
   });
 }
 function forgotDialog(){
+  const login0 = esc($("#a-user")?.value||"");
   modal(`<h3>Parolni tiklash</h3>
-    <p class="small muted">Ro'yxatdan o'tganda berilgan tiklash kodi bo'lsa, yangi parolni shu yerda o'rnating.</p>
+    <form id="fg1" class="stack">
+      <p class="small muted">Login yoki emailingizni yozing. Hisobingizga bog'langan emailga 6 xonali kod yuboramiz.</p>
+      <label class="f">Login yoki email<input id="fg-login" autocomplete="username" autocapitalize="off" required value="${login0}"></label>
+      <p class="err" id="fg1-err"></p>
+      <div class="row"><button class="primary" type="submit">Kod yuborish</button><button type="button" data-close>Bekor qilish</button></div>
+    </form>
+    <form id="fg2" class="stack" hidden>
+      <div class="notice info">Agar bu hisob ro'yxatdan o'tgan va unga email bog'langan bo'lsa, kod yuborildi. Pochtangizni, kerak bo'lsa "Spam" papkasini ham tekshiring.</div>
+      <label class="f">Emaildagi kod<input id="fg-code" inputmode="numeric" autocomplete="one-time-code" required maxlength="6" placeholder="123456"></label>
+      <label class="f">Yangi parol<input id="fg-pass" type="password" autocomplete="new-password" required minlength="6"></label>
+      <p class="err" id="fg2-err"></p>
+      <div class="row"><button class="primary" type="submit">Parolni yangilash</button><button type="button" id="fg-back">Qayta yuborish</button></div>
+    </form>
+    <details class="small"><summary>Email yo'q yoki kelmayaptimi?</summary>
+      <p class="muted">Siz qo'shilgan guruh egasi (o'qituvchingiz) loginingizni ko'ra oladi va parolingizni tiklab bera oladi: guruh → Sozlamalar → A'zolar. O'qituvchilar sayt administratoriga murojaat qiladi.</p>
+      <p class="muted">Profildan olingan tiklash kodingiz bo'lsa: <button type="button" class="ghost small" id="fg-rc">tiklash kodi bilan tiklash</button></p>
+    </details>`, m => {
+    const done = r => { closeModal(); S.user = r.user; renderUser(); const code = S.pendingCode; S.pendingCode = null; go(code ? "/g/"+code : "/", true); toast("Parol yangilandi"); };
+    $("#fg1",m).addEventListener("submit", async e => {
+      e.preventDefault(); const btn = $("#fg1 button[type=submit]",m); btn.disabled = true;
+      try { await api("POST","/api/forgot/send",{ login:$("#fg-login",m).value.trim() }); $("#fg1",m).hidden = true; $("#fg2",m).hidden = false; $("#fg-code",m).focus(); }
+      catch(err){ $("#fg1-err",m).textContent = err.message; }
+      btn.disabled = false;
+    });
+    $("#fg2",m).addEventListener("submit", async e => {
+      e.preventDefault();
+      try { done(await api("POST","/api/forgot/reset",{ login:$("#fg-login",m).value.trim(), code:$("#fg-code",m).value, password:$("#fg-pass",m).value })); }
+      catch(err){ $("#fg2-err",m).textContent = err.message; }
+    });
+    $("#fg-back",m).addEventListener("click", () => { $("#fg2",m).hidden = true; $("#fg1",m).hidden = false; });
+    $("#fg-rc",m).addEventListener("click", () => recoveryCodeResetDialog($("#fg-login",m).value.trim()));
+  });
+}
+function recoveryCodeResetDialog(login){
+  modal(`<h3>Tiklash kodi bilan</h3>
     <form id="fg" class="stack">
-      <label class="f">Login<input id="fg-user" autocomplete="username" autocapitalize="off" required value="${esc($("#a-user")?.value||"")}"></label>
+      <label class="f">Login<input id="fg-user" autocomplete="username" autocapitalize="off" required value="${esc(login.includes("@")?"":login)}"></label>
       <label class="f">Tiklash kodi<input id="fg-code" autocapitalize="characters" autocomplete="off" required placeholder="XXXX-XXXX-XXXX"></label>
       <label class="f">Yangi parol<input id="fg-pass" type="password" autocomplete="new-password" required minlength="6"></label>
       <p class="err" id="fg-err"></p>
       <div class="row"><button class="primary" type="submit">Parolni yangilash</button><button type="button" data-close>Bekor qilish</button></div>
-    </form>
-    <div class="notice info">Kod yo'q yoki loginni unutdingizmi? Siz qo'shilgan guruh egasi (o'qituvchingiz) loginingizni ko'ra oladi va parolingizni tiklab bera oladi: guruh → Sozlamalar → A'zolar. O'qituvchilar sayt administratoriga murojaat qiladi.</div>`, m => {
+    </form>`, m => {
     $("#fg",m).addEventListener("submit", async e => {
       e.preventDefault();
-      const btn = $("button[type=submit]",m); btn.disabled = true;
       try {
         const r = await api("POST","/api/reset-password",{ username:$("#fg-user",m).value.trim(), code:$("#fg-code",m).value, password:$("#fg-pass",m).value });
-        S.user = r.user; renderUser();
-        const code = S.pendingCode; S.pendingCode = null;
-        go(code ? "/g/"+code : "/", true);
-        toast("Parol yangilandi");
-        recoveryDialog(r.recoveryCode);
-      } catch(err){ $("#fg-err",m).textContent = err.message; btn.disabled = false; }
+        S.user = r.user; renderUser(); const code = S.pendingCode; S.pendingCode = null; go(code ? "/g/"+code : "/", true);
+        toast("Parol yangilandi"); recoveryDialog(r.recoveryCode);
+      } catch(err){ $("#fg-err",m).textContent = err.message; }
     });
   });
 }
-function profileDialog(){
+async function askEmail(){
+  try { const r = await api("GET","/api/me"); if (!r.user || r.user.email) return; S.user = { ...S.user, ...r.user }; } catch { return; }
+  if (sessionStorage.getItem("tt:askedEmail")) return; try { sessionStorage.setItem("tt:askedEmail","1"); } catch {}
+  profileDialog(true);
+}
+async function profileDialog(askingEmail){
+  try { const r = await api("GET","/api/me"); if (r.user) S.user = { ...S.user, ...r.user }; } catch {}
   modal(`<h3>${esc(S.user.name)}</h3>
     <p class="small muted">Login: <b>${esc(S.user.username)}</b></p>
+    ${askingEmail?`<div class="notice info">Hisobingizga email qo'shing: parolni unutsangiz, tiklash kodi shu manzilga keladi.</div>`:""}
+    <form id="em" class="stack">
+      <label class="f">Email<input id="em-email" type="email" autocomplete="email" value="${esc(S.user.email||"")}" placeholder="masalan: vali@gmail.com" required></label>
+      <label class="f">Parolingiz<input id="em-pass" type="password" autocomplete="current-password" required></label>
+      <p class="err" id="em-err"></p>
+      <div class="row"><button class="primary" type="submit">Emailni saqlash</button></div>
+    </form>
+    <hr>
     <form id="pw" class="stack">
       <input type="text" autocomplete="username" value="${esc(S.user.username)}" hidden readonly>
       <h4>Parolni o'zgartirish</h4>
@@ -244,6 +289,11 @@ function profileDialog(){
       <p class="err" id="pw-err"></p>
       <div class="row"><button class="primary" type="submit">Saqlash</button><button type="button" id="pw-rc">Yangi tiklash kodi olish</button><button type="button" data-close>Yopish</button></div>
     </form>`, m => {
+    $("#em",m).addEventListener("submit", async e => {
+      e.preventDefault();
+      try { const r = await api("POST","/api/me/email",{ email:$("#em-email",m).value.trim(), password:$("#em-pass",m).value }); S.user.email = r.email; toast("Email saqlandi"); if (askingEmail) closeModal(); }
+      catch(err){ $("#em-err",m).textContent = err.message; }
+    });
     $("#pw",m).addEventListener("submit", async e => {
       e.preventDefault();
       try { await api("POST","/api/me/password",{ current:$("#pw-cur",m).value, password:$("#pw-new",m).value }); closeModal(); toast("Parol o'zgartirildi"); }
@@ -259,12 +309,12 @@ function profileDialog(){
 }
 function adminDialog(){
   modal(`<h3>Foydalanuvchilar</h3>
-    <input id="ad-q" type="search" placeholder="Ism yoki login bo'yicha qidirish" autocomplete="off">
+    <input id="ad-q" type="search" placeholder="Ism, login yoki email bo'yicha qidirish" autocomplete="off">
     <p class="small muted" id="ad-info">Yuklanmoqda…</p>
     <div class="tw" style="max-height:55vh;overflow:auto" id="ad-list"></div>
     <div class="row"><button data-close>Yopish</button></div>`, m => {
     let users = [], t;
-    const draw = () => { $("#ad-list",m).innerHTML = users.length ? `<table><thead><tr><th>Ism</th><th>Login</th><th>Guruh</th><th>Sana</th><th></th></tr></thead><tbody>${users.map(u=>`<tr><td>${esc(u.name)}</td><td><b>${esc(u.username)}</b></td><td>${u.groups}</td><td class="small" style="white-space:nowrap">${new Date(u.createdAt).toLocaleDateString("uz-UZ",{day:"2-digit",month:"2-digit",year:"2-digit"})}</td><td>${u.isAdmin?`<span class="small muted">admin</span>`:`<button class="small" style="white-space:nowrap" data-ad-reset="${u.id}" title="Parolni tiklash">Tiklash</button>`}</td></tr>`).join("")}</tbody></table>` : `<p class="muted" style="padding:12px">Topilmadi.</p>`; };
+    const draw = () => { $("#ad-list",m).innerHTML = users.length ? `<table><thead><tr><th>Ism</th><th>Login</th><th>Guruh</th><th>Sana</th><th></th></tr></thead><tbody>${users.map(u=>`<tr><td>${esc(u.name)}${u.email?`<div class="small muted">${esc(u.email)}</div>`:""}</td><td><b>${esc(u.username)}</b></td><td>${u.groups}</td><td class="small" style="white-space:nowrap">${new Date(u.createdAt).toLocaleDateString("uz-UZ",{day:"2-digit",month:"2-digit",year:"2-digit"})}</td><td>${u.isAdmin?`<span class="small muted">admin</span>`:`<button class="small" style="white-space:nowrap" data-ad-reset="${u.id}" title="Parolni tiklash">Tiklash</button>`}</td></tr>`).join("")}</tbody></table>` : `<p class="muted" style="padding:12px">Topilmadi.</p>`; };
     const load = async () => { try { const r = await api("GET","/api/admin/users?q="+encodeURIComponent($("#ad-q",m).value.trim())); users = r.users; $("#ad-info",m).textContent = `Jami ro'yxatdan o'tganlar: ${r.total}. Ko'rsatilgan: ${users.length}.`; draw(); } catch(err){ $("#ad-info",m).textContent = err.message; } };
     $("#ad-q",m).addEventListener("input", () => { clearTimeout(t); t = setTimeout(load, 250); });
     $("#ad-list",m).addEventListener("click", async e => {
@@ -893,5 +943,6 @@ window.addEventListener("beforeunload", e => { if (S.view==="quiz") { e.preventD
 (async () => {
   try { S.user = (await api("GET","/api/me")).user; } catch {}
   renderUser(); route();
+  if (S.user && !S.user.email) askEmail();
 })();
 })();
